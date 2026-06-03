@@ -6,7 +6,8 @@ class SMSPayload(BaseModel):
     """Incoming webhook payload from SMS Forwarder Android app."""
     sender: str = Field(alias="from")
     message: str
-    sentStamp: int
+    contact: Optional[str] = None
+    sentStamp: Optional[int] = None
     receivedStamp: Optional[int] = None
     deviceName: Optional[str] = None
     sim: Optional[str] = None

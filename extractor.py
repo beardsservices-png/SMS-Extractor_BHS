@@ -69,7 +69,11 @@ MEANINGFUL_FIELDS = {
 
 
 def format_thread(thread: list) -> str:
-    return "\n".join(f"[SMS]: {msg['text']}" for msg in thread)
+    lines = []
+    for msg in thread:
+        contact = f" ({msg['contact']})" if msg.get("contact") else ""
+        lines.append(f"[SMS from {msg['role']}{contact}]: {msg['text']}")
+    return "\n".join(lines)
 
 
 async def extract_lead(thread: list) -> dict:

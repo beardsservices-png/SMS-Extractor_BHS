@@ -65,7 +65,7 @@ async def receive_sms(
     phone_hash = hash_phone(phone)
     log.info(f"[sms] received from={phone_hash} ts={payload.sentStamp}")
 
-    upsert_message(phone, payload.message, payload.sentStamp)
+    upsert_message(phone, payload.message, payload.sentStamp, payload.contact)
 
     thread_record = get_thread(phone)
     thread = json.loads(thread_record["thread_json"])

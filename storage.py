@@ -42,9 +42,11 @@ def get_thread(phone: str) -> dict | None:
     return dict(row) if row else None
 
 
-def upsert_message(phone: str, message: str, sent_ts: int):
+def upsert_message(phone: str, message: str, sent_ts: int | None, contact: str | None = None):
     now = _now()
-    new_msg = {"role": "customer", "text": message, "ts": sent_ts}
+    new_msg = {"role": "customer", "text": message, "ts": sent_ts or 0}
+    if contact:
+        new_msg["contact"] = contact
     conn = _conn()
     row = conn.execute("SELECT thread_json FROM sms_leads WHERE phone = ?", (phone,)).fetchone()
     if row:
