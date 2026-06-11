@@ -7,8 +7,8 @@ class SMSPayload(BaseModel):
     sender: str = Field(alias="from")
     message: str
     contact: Optional[str] = None
-    sentStamp: Optional[int] = None
-    receivedStamp: Optional[int] = None
+    sentStamp: Optional[str] = None
+    receivedStamp: Optional[str] = None
     deviceName: Optional[str] = None
     sim: Optional[str] = None
 
