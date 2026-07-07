@@ -58,9 +58,16 @@ async def health():
 @app.post("/sms")
 async def receive_sms(
     payload: SMSPayload,
+    request: Request,
     token: str = Query(default=""),
 ):
     _check_token(token)
+
+    # TEMPORARY: log the raw body to see the exact field names SMS Forwarder
+    # sends, since sentStamp/receivedStamp are coming through as None. Remove
+    # once the field mapping in models.SMSPayload is confirmed correct.
+    raw_body = await request.body()
+    log.info(f"[sms] raw body: {raw_body.decode('utf-8', errors='replace')}")
 
     phone = payload.sender
     phone_hash = hash_phone(phone)

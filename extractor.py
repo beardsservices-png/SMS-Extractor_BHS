@@ -12,9 +12,11 @@ log = logging.getLogger("bhs-sms")
 # Railway's container network has flaky/unreachable IPv6 egress, which causes
 # httpx to try an IPv6 route first, fail, and only fall back to IPv4 after a
 # delay (surfacing as repeated "Connection error" from the Anthropic SDK).
-# Binding local_address="0.0.0.0" forces httpx to use IPv4 outright.
+# local_address="0.0.0.0" tells httpcore to connect using an AF_INET (IPv4)
+# address outright, skipping the failing IPv6 attempt entirely.
 _HTTP_CLIENT = httpx.AsyncClient(
     transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
+    timeout=httpx.Timeout(30.0, connect=10.0),
 )
 _client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY, http_client=_HTTP_CLIENT)
 
@@ -22,7 +24,8 @@ _client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY, http_client=_HTTP_
 def log_client_config():
     """Log the active Anthropic HTTP client config so IPv4/IPv6 issues are visible at startup."""
     log.info(
-        "[anthropic] client ready: transport=AsyncHTTPTransport local_address=0.0.0.0 (IPv4 egress forced)"
+        "[anthropic] client ready: transport=AsyncHTTPTransport local_address=0.0.0.0 "
+        "(IPv4 egress forced) timeout=30s connect_timeout=10s"
     )
 
 SYSTEM_PROMPT = """You are a lead extraction assistant for Beard's Home Services (BHS), a solo handyman and general contracting business owned by Brian Beard in Mountain Home, Arkansas (Baxter County area). Brian does residential and light commercial work — carpentry, decks, fencing, roofing, concrete, remodeling, painting, and general repairs.
