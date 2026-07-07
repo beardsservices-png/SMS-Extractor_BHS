@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 import config
-from extractor import extract_lead, has_new_information, hash_phone
+from extractor import extract_lead, has_new_information, hash_phone, log_client_config
 from models import SMSPayload
 from notifier import send_lead_notification
 from storage import (
@@ -32,6 +32,7 @@ log = logging.getLogger("bhs-sms")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    log_client_config()
     task = asyncio.create_task(_ttl_checker())
     yield
     task.cancel()
