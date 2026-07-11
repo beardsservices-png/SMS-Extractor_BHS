@@ -57,7 +57,6 @@ async def health():
 
 @app.post("/sms")
 async def receive_sms(
-    payload: SMSPayload,
     request: Request,
     token: str = Query(default=""),
 ):
@@ -68,6 +67,26 @@ async def receive_sms(
     # once the field mapping in models.SMSPayload is confirmed correct.
     raw_body = await request.body()
     log.info(f"[sms] raw body: {raw_body.decode('utf-8', errors='replace')}")
+
+    # SMS Forwarder has been sent both as JSON and as x-www-form-urlencoded
+    # while we were dialing in its config on the phone — accept either so a
+    # body-type toggle on the app side doesn't turn into a silent 422.
+    content_type = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" in content_type:
+        form = await request.form()
+        data = dict(form)
+    else:
+        try:
+            data = json.loads(raw_body)
+        except json.JSONDecodeError:
+            log.error(f"[sms] unparseable body (content-type={content_type!r})")
+            return JSONResponse({"ok": True, "extracted": False})
+
+    try:
+        payload = SMSPayload.model_validate(data)
+    except Exception as e:
+        log.error(f"[sms] payload validation failed: {e}")
+        return JSONResponse({"ok": True, "extracted": False})
 
     phone = payload.sender
     phone_hash = hash_phone(phone)
