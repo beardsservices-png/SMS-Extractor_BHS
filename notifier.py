@@ -64,8 +64,12 @@ async def send_lead_notification(extraction: dict, is_final: bool = False):
     label = LEAD_TYPE_LABELS.get(lead_type, lead_type.replace("_", " ").title())
     customer_name = extraction.get("customer_name") or "Unknown"
 
-    prefix = "\U0001f4cb Final Lead —" if is_final else "\U0001f4cb New Lead —"
-    title = f"{prefix} {label} — {customer_name}"
+    # ntfy sends this as a raw HTTP header, which httpx encodes as strict ASCII —
+    # both the emoji and the em dash threw UnicodeEncodeError and silently killed
+    # every notification. Emoji/dashes stay in the body (sent as UTF-8 bytes, not
+    # a header) where they're safe; the header uses a plain ASCII hyphen instead.
+    prefix = "Final Lead -" if is_final else "New Lead -"
+    title = f"{prefix} {label} - {customer_name}"
 
     urgency = (extraction.get("urgency") or "moderate").lower()
     priority = URGENCY_TO_PRIORITY.get(urgency, "default")
@@ -75,8 +79,13 @@ async def send_lead_notification(extraction: dict, is_final: bool = False):
     has_lockbox = bool(extraction.get("lockbox_code"))
     body = _build_body(extraction, has_lockbox)
 
+    # Belt-and-suspenders: any other non-ASCII (e.g. an accented customer name)
+    # would hit the same httpx header-encoding wall — degrade gracefully instead
+    # of losing the notification entirely.
+    safe_title = title.encode("ascii", "replace").decode("ascii")
+
     headers = {
-        "Title": title,
+        "Title": safe_title,
         "Priority": priority,
         "Content-Type": "text/plain",
         "Tags": f"sms,lead,{lead_type}",
