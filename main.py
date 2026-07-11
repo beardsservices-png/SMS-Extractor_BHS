@@ -75,12 +75,24 @@ async def receive_sms(
     if "application/x-www-form-urlencoded" in content_type:
         form = await request.form()
         data = dict(form)
-    else:
+    elif raw_body:
         try:
             data = json.loads(raw_body)
         except json.JSONDecodeError:
             log.error(f"[sms] unparseable body (content-type={content_type!r})")
-            return JSONResponse({"ok": True, "extracted": False})
+            data = {}
+    else:
+        data = {}
+
+    # The app's JSON/form Body-field templating has proven unreliable (tokens
+    # coming through unresolved regardless of syntax) — URL query-string
+    # substitution tends to be a simpler, more reliably-supported mechanism in
+    # these apps, so accept from/message/contact/receivedStamp/sentStamp there
+    # too and let them take priority over anything (unresolved) in the body.
+    query_data = {k: v for k, v in request.query_params.items() if k != "token"}
+    if query_data:
+        log.info(f"[sms] query params: {query_data}")
+        data = {**data, **query_data}
 
     try:
         payload = SMSPayload.model_validate(data)
