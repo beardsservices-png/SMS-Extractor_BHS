@@ -98,6 +98,15 @@ def format_thread(thread: list) -> str:
     return "\n".join(lines)
 
 
+def _strip_code_fence(text: str) -> str:
+    """Strip a ```json ... ``` or ``` ... ``` wrapper if the model added one despite instructions not to."""
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[: -3]
+    return text.strip()
+
+
 async def extract_lead(thread: list) -> dict:
     thread_text = format_thread(thread)
     response = await _client.messages.create(
@@ -112,8 +121,17 @@ async def extract_lead(thread: list) -> dict:
             }
         ],
     )
-    raw = response.content[0].text.strip()
-    return json.loads(raw)
+    raw = _strip_code_fence(response.content[0].text.strip())
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # TEMPORARY: log what actually came back so we can see why parsing failed —
+        # remove once the cause of intermittent non-JSON responses is confirmed.
+        log.error(
+            f"[extract] non-JSON response: stop_reason={response.stop_reason} "
+            f"content_blocks={len(response.content)} raw={raw!r}"
+        )
+        raise
 
 
 def has_new_information(previous: dict | None, current: dict) -> bool:
