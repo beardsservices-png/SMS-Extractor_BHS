@@ -6,11 +6,27 @@ Receives SMS conversations forwarded from Brian's Android phone, extracts struct
 
 ## How It Works
 
-1. **SMS Forwarder** (Android app) forwards inbound texts to this service's `/sms` webhook
-2. Messages are accumulated per sender into a conversation thread (SQLite)
-3. After each new message, Claude analyzes the full thread and extracts lead fields as JSON
+1. **SMS Forwarder** (Android app) forwards texts to this service's `/sms` webhook — both
+   the ones Brian receives and (optionally) the ones he sends
+2. Messages are accumulated per customer into a conversation thread (SQLite). Both sides of
+   the conversation land in the same thread, keyed on the customer's number
+3. After each new message **from the customer**, Claude analyzes the full thread and
+   extracts lead fields as JSON
 4. If meaningful new information was found (new address, scope, urgency, etc.), an ntfy push fires
 5. After 4 hours of silence from a sender, a final "complete" card is sent automatically
+
+### Why forward your own replies too
+
+Customers answer questions instead of restating them. "142 Oak Ridge Rd" or a bare "yeah,
+it's a rental" means nothing on its own — it only makes sense next to the question Brian
+asked. With outgoing messages forwarded, the extractor sees both halves and can attribute
+those answers correctly.
+
+Brian's own messages never trigger a notification or an extraction of their own — he wrote
+them, so a card about them would just be his own text read back to him. They're stored as
+context for the next message the customer sends. His details are also never mistaken for
+the customer's: an address or a time *he* offers doesn't become the customer's address or
+availability.
 
 ---
 
@@ -30,6 +46,36 @@ Receives SMS conversations forwarded from Brian's Android phone, extracts struct
    {"from":"{{from}}","message":"{{message}}","sentStamp":"{{sentStamp}}","receivedStamp":"{{receivedStamp}}"}
    ```
 8. Tap **Test** to send a test message, then enable the rule
+
+### Second rule: forwarding Brian's own replies
+
+Add a **separate rule** for sent/outgoing messages, configured the same way as above with
+one change — add `&direction=sent` to the end of the URL:
+
+```
+https://YOUR-RAILWAY-URL.railway.app/sms?token=YOUR_WEBHOOK_SECRET&direction=sent
+```
+
+That literal `direction=sent` is what tells the service the message came from Brian. It's
+hardcoded text rather than a `{{token}}`, so unlike the body template it cannot fail to
+resolve.
+
+**Identifying who the reply went to.** The service needs the customer's number to file the
+reply in the right thread, and tries three things in order:
+
+1. A recipient field in the payload — `to`, `recipient`, `destination` or `address`. If the
+   app offers a `{{to}}`-style token on sent messages, add it to the URL as `&to={{to}}`.
+2. The `from` field, when it isn't Brian's own number — some forwarders put the *other*
+   party there on sent messages.
+3. Nothing usable → the message is dropped and an error is logged naming the fields that
+   did arrive, so the mapping can be corrected.
+
+Set the `OWNER_PHONE` environment variable to Brian's mobile number. It lets the service
+recognize his number and skip past it when hunting for the customer's, and it acts as a
+backup direction signal if `&direction=sent` is ever missing from a rule.
+
+Unresolved template tokens are ignored everywhere — if a field arrives as the literal text
+`{{to}}`, it's treated as absent rather than used as a phone number.
 
 ### Which contacts to whitelist / filter
 
@@ -123,6 +169,7 @@ Body:
 | `NTFY_URL` | No | ntfy server URL — default: `https://ntfy.sh` |
 | `NTFY_TOKEN` | No | Bearer token if your ntfy topic requires auth |
 | `WEBHOOK_SECRET` | No | Token appended as `?token=` to protect the `/sms` endpoint |
+| `OWNER_PHONE` | No | Brian's mobile number — identifies forwarded outgoing texts so replies join the customer's thread. Any format. |
 | `THREAD_TTL_HOURS` | No | Hours of silence before thread completion (default: `4`) |
 | `PORT` | No | Railway sets this automatically |
 | `DATABASE_PATH` | No | SQLite path — default: `./bhs_sms.db` |

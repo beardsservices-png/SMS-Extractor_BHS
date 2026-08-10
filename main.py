@@ -8,8 +8,15 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 import config
-from extractor import extract_lead, has_new_information, hash_phone, log_client_config
+from extractor import (
+    extract_lead,
+    has_customer_message,
+    has_new_information,
+    hash_phone,
+    log_client_config,
+)
 from models import SMSPayload
+from phones import normalize_phone, same_phone
 from notifier import send_lead_notification
 from storage import (
     get_active_threads,
@@ -44,6 +51,64 @@ app = FastAPI(title="BHS SMS Lead Extractor", lifespan=lifespan)
 def _check_token(token: str):
     if config.WEBHOOK_SECRET and token != config.WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# ─── DIRECTION ────────────────────────────────────────────────────────────────
+
+# Substrings the app (or a hardcoded ?direction= value) may use to describe
+# which way a message went. Checked as substrings so "sent"/"outgoing"/"OUT"
+# all land the same way.
+_OUTBOUND_HINTS = ("sent", "out")
+_INBOUND_HINTS = ("receiv", "incoming", "inbox", "in")
+
+
+def _resolve_direction(payload: SMSPayload) -> str:
+    """Decide whether a forwarded message was sent by Brian or received by him.
+
+    Preference order matters: an explicit ?direction= in the rule's URL is a
+    literal string and always resolves, whereas matching against OWNER_PHONE
+    depends on that variable being set and on the app populating "from" with
+    Brian's own number on sent messages.
+    """
+    declared = (payload.direction or "").strip().lower()
+    if declared:
+        if any(hint in declared for hint in _OUTBOUND_HINTS):
+            return "outbound"
+        if any(hint in declared for hint in _INBOUND_HINTS):
+            return "inbound"
+
+    if config.OWNER_PHONE and same_phone(payload.sender, config.OWNER_PHONE):
+        return "outbound"
+
+    return "inbound"
+
+
+def _resolve_counterparty(payload: SMSPayload, direction: str) -> str | None:
+    """Return the customer's number — the number a thread is keyed on.
+
+    On a received message that's the sender. On one Brian sent it's the
+    recipient, which the app may report under any of several field names, or
+    (in apps that reuse "from" for the other party on sent messages) under
+    "from" itself. Brian's own number is skipped wherever it shows up, since
+    keying his thread on his own number would merge every conversation.
+    """
+    if direction == "inbound":
+        return payload.sender
+
+    candidates = (
+        payload.to,
+        payload.recipient,
+        payload.destination,
+        payload.address,
+        payload.sender,
+    )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if config.OWNER_PHONE and same_phone(candidate, config.OWNER_PHONE):
+            continue
+        return candidate
+    return None
 
 
 # ─── HEALTH ───────────────────────────────────────────────────────────────────
@@ -100,11 +165,30 @@ async def receive_sms(
         log.error(f"[sms] payload validation failed: {e}")
         return JSONResponse({"ok": True, "extracted": False})
 
-    phone = payload.sender
-    phone_hash = hash_phone(phone)
-    log.info(f"[sms] received from={phone_hash} ts={payload.sentStamp}")
+    direction = _resolve_direction(payload)
+    counterparty = _resolve_counterparty(payload, direction)
+    if not counterparty:
+        log.error(
+            f"[sms] {direction} message with no usable counterparty number; "
+            f"fields present: {sorted(data)}"
+        )
+        return JSONResponse({"ok": True, "extracted": False})
 
-    upsert_message(phone, payload.message, payload.sentStamp, payload.contact)
+    phone = normalize_phone(counterparty)
+    phone_hash = hash_phone(phone)
+    role = "brian" if direction == "outbound" else "customer"
+    log.info(f"[sms] {direction} with={phone_hash} ts={payload.sentStamp}")
+
+    upsert_message(phone, payload.message, payload.sentStamp, payload.contact, role=role)
+
+    if direction == "outbound":
+        # Brian wrote this one, so there is nothing to tell him about it — a
+        # card here would just be his own text read back to him, plus an API
+        # call. It's stored so the next inbound message extracts against the
+        # full two-sided conversation, where his questions give the customer's
+        # short answers their meaning.
+        log.info(f"[sms] outbound reply stored for {phone_hash}, extraction skipped")
+        return JSONResponse({"ok": True, "extracted": False, "direction": "outbound"})
 
     thread_record = get_thread(phone)
     thread = json.loads(thread_record["thread_json"])
@@ -152,6 +236,10 @@ async def manual_extract(
 ):
     _check_token(token)
 
+    # Normalized so a bookmarked URL works whether it was saved with the
+    # number as "+18705551234", "8705551234" or "(870) 555-1234".
+    phone_number = normalize_phone(phone_number)
+
     thread_record = get_thread(phone_number)
     if not thread_record:
         raise HTTPException(status_code=404, detail="No thread found for this number")
@@ -188,6 +276,7 @@ async def get_lockbox_code(
 ):
     _check_token(token)
 
+    phone_number = normalize_phone(phone_number)
     code = get_lockbox(phone_number)
     if not code:
         raise HTTPException(status_code=404, detail="No lockbox code on file for this number")
@@ -217,6 +306,15 @@ async def _ttl_checker():
 
                 try:
                     thread = json.loads(t["thread_json"])
+
+                    # Brian texting a number first (a callback, a supplier)
+                    # opens a thread with nothing in it but his own messages.
+                    # There's no lead there to extract, so close it quietly.
+                    if not has_customer_message(thread):
+                        mark_complete(phone)
+                        log.info(f"[ttl] closed outbound-only thread for {phone_hash}")
+                        continue
+
                     extraction = await extract_lead(thread)
 
                     if extraction.get("lead_type") != "vendor_or_other":

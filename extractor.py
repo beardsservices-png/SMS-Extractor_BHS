@@ -32,6 +32,25 @@ SYSTEM_PROMPT = """You are a lead extraction assistant for Beard's Home Services
 
 Your job is to analyze an SMS conversation thread and extract structured lead information.
 
+WHO IS SPEAKING:
+A thread may contain both sides of the conversation.
+- "[SMS from customer]" is the potential customer — the person the lead is about.
+- "[SMS from Brian (BHS owner)]" is Brian himself, replying from the business phone.
+
+Brian's own messages are CONTEXT ONLY. Never extract Brian's details as the customer's:
+- An address Brian gives (his shop, where he's coming from) is not property_address.
+- A price Brian quotes is not customer information.
+- Brian's own schedule ("I can be there Thursday") is not availability — it is his offer.
+- Brian's name is never customer_name.
+
+Do use his messages to interpret what the customer says, because the customer's replies
+are often answers to his questions:
+- Brian: "What's the address?" / customer: "142 Oak Ridge Rd" -> property_address.
+- Brian: "Is that a rental?" / customer: "Yeah it's a rental" -> is_rental_or_sale.
+- Brian: "Does Thursday morning work?" / customer: "Thursday works" -> availability is the
+  agreed time, because the customer confirmed it.
+A bare "yes" or "ok" from the customer means whatever Brian's preceding message proposed.
+
 LEAD TYPES:
 - new_customer_inquiry: First contact, no prior relationship
 - realtor_referral: Contact from or on behalf of a real estate agent
@@ -90,12 +109,35 @@ MEANINGFUL_FIELDS = {
 }
 
 
+# Thread roles are stored as short slugs; these are the labels the model sees.
+ROLE_LABELS = {
+    "customer": "customer",
+    "brian": "Brian (BHS owner)",
+}
+
+
 def format_thread(thread: list) -> str:
     lines = []
     for msg in thread:
-        contact = f" ({msg['contact']})" if msg.get("contact") else ""
-        lines.append(f"[SMS from {msg['role']}{contact}]: {msg['text']}")
+        role = ROLE_LABELS.get(msg.get("role"), msg.get("role") or "customer")
+        # A contact name only identifies the customer; on Brian's own outgoing
+        # messages it's the recipient's name and would read as his own.
+        contact = (
+            f" ({msg['contact']})"
+            if msg.get("contact") and msg.get("role") != "brian"
+            else ""
+        )
+        lines.append(f"[SMS from {role}{contact}]: {msg['text']}")
     return "\n".join(lines)
+
+
+def has_customer_message(thread: list) -> bool:
+    """True if anyone other than Brian has written in the thread.
+
+    A thread containing only Brian's own outgoing texts has no lead in it to
+    extract, so it isn't worth an API call.
+    """
+    return any(msg.get("role") != "brian" for msg in thread)
 
 
 def _strip_code_fence(text: str) -> str:
