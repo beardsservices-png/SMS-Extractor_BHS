@@ -1,3 +1,20 @@
+> # ⚠️ DEPRECATED — DO NOT DEVELOP HERE
+>
+> **SMS is handled by `beardsservices-png/BHSmobileapp`.** Work goes there.
+>
+> This service received nothing but Railway health checks. Brian's phone forwards to the
+> BHS app, which is a complete port of this code — same `POST /sms`,
+> `/sms/extract/<phone>`, `/sms/lockbox/<phone>`, same Claude extraction, ntfy and thread
+> TTL — plus everything this never had: customers, jobs, estimates, the service catalog and
+> the Leads inbox.
+>
+> The outgoing-message handling on the `claude/callback-form-estimate-flow-elhdaw` branch was
+> **never merged or deployed here**. Its logic (direction resolution, `OWNER_PHONE` matching,
+> counterparty resolution) was ported into the BHS app's own `/sms` webhook on 2026-08-11 and
+> is live there. Do not merge that branch — it would create a third copy.
+>
+> Archived 2026-08-11.
+
 # BHS SMS Lead Extractor
 
 Receives SMS conversations forwarded from Brian's Android phone, extracts structured lead information using Claude AI, and pushes Lead Intake Cards to Brian's phone via ntfy — same format as the existing Bill callback notifications.
